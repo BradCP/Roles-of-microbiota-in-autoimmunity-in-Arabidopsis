@@ -1,0 +1,315 @@
+#Activate QIIME2
+conda activate qiime2-2022.2
+
+###################
+###### TOTAL ######
+###################
+
+#Set variable for feature table directory and taxonomy directory.
+FEATURE_TABLE_DIR=feature_table
+TAXONOMY_DIR=taxonomy
+
+#Determine depth for diversity analyses using "Interactive Sample Detail" tab in filtered_table.qzv. In general, you want to use the highest depth that retains the most number of samples.
+DEPTH=1952
+
+#Set directory name for diversity analyses.
+DIVERSITY_DIR=diversity_$DEPTH
+
+#Run core diversity analyses. 
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny $TAXONOMY_DIR/rooted-tree.qza \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-n-jobs-or-threads $SLURM_CPUS_PER_TASK \
+  --p-sampling-depth $DEPTH \
+  --m-metadata-file sample-metadata.tsv \
+  --output-dir $DIVERSITY_DIR
+
+#Calculate additional alpha diversity metric: Simpson Diversity.
+qiime diversity alpha \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-metric simpson \
+  --o-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza
+
+
+## Alpha significance testing ##
+
+#Simpson diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/simpson_group_significance.qzv
+
+#Observed OTUs significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/observed_features_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/observed_features_group_significance.qzv
+
+#Faith's phylogenetic diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/faith_pd_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/faith_pd_group_significance.qzv
+
+#Evenness significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/evenness_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/evenness_group_significance.qzv
+
+#Shannon diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/shannon_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/shannon_group_significance.qzv
+
+#Set depth for alpha rarefaction plotting.
+ALPHA_DEPTH=15000
+
+#Alpha rarefaction plotting. The value that you provide for '--p-max-depth' should be determined by reviewing the “Frequency per sample” information presented in the filtered_table.qza file that was created above. In general, choosing a value that is somewhere around the median frequency seems to work well, but you may want to increase that value if the lines in the resulting rarefaction plot don’t appear to be leveling out, or decrease that value if you seem to be losing many of your samples due to low total frequencies closer to the minimum sampling depth than the maximum sampling depth. This step may take a while. To speed up by decreasing resolution, remove line '--p-steps `expr $ALPHA_DEPTH / 100`'.
+qiime diversity alpha-rarefaction \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --i-phylogeny $TAXONOMY_DIR/rooted-tree.qza \
+  --p-max-depth $ALPHA_DEPTH \
+  --p-steps `expr $ALPHA_DEPTH / 100` \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/alpha_rarefaction_plot_$ALPHA_DEPTH.qzv
+
+
+## Beta significance testing ##
+
+#Specify a metadata column to examine significance. This gives you a q value to associate with your pretty ordination analyses. For instance, to see if some beta diversity metric is significantly different between various genotypes, replace "0000000" with "genotype" -- or the corresponding column header for genotype data.
+SIGNIFICANCE=genotype_2
+
+#Group significance statistical testing using unweighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/unweighted_unifrac_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using weighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/weighted_unifrac_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using Jaccard distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/jaccard_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/jaccard_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using Bray-Curtis distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/bray_curtis_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/bray_curtis_significance_$SIGNIFICANCE.qzv
+
+
+###################
+####### GRM #######
+###################
+
+#Set variable for feature table directory and taxonomy directory.
+FEATURE_TABLE_DIR=feature_table-grm
+
+#Determine depth for diversity analyses using "Interactive Sample Detail" tab in filtered_table.qzv. In general, you want to use the highest depth that retains the most number of samples.
+DEPTH=1952
+
+#Set directory name for diversity analyses.
+DIVERSITY_DIR=diversity-grm_$DEPTH
+
+#Run core diversity analyses. 
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny $TAXONOMY_DIR/rooted-tree.qza \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-n-jobs-or-threads $SLURM_CPUS_PER_TASK \
+  --p-sampling-depth $DEPTH \
+  --m-metadata-file sample-metadata.tsv \
+  --output-dir $DIVERSITY_DIR
+
+#Calculate additional alpha diversity metric: Simpson Diversity.
+qiime diversity alpha \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-metric simpson \
+  --o-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza
+
+
+## Alpha significance testing ##
+
+#Simpson diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/simpson_group_significance.qzv
+
+#Observed OTUs significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/observed_features_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/observed_features_group_significance.qzv
+
+#Faith's phylogenetic diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/faith_pd_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/faith_pd_group_significance.qzv
+
+#Evenness significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/evenness_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/evenness_group_significance.qzv
+
+#Shannon diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/shannon_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/shannon_group_significance.qzv
+
+
+## Beta significance testing ##
+
+#Specify a metadata column to examine significance. This gives you a q value to associate with your pretty ordination analyses. For instance, to see if some beta diversity metric is significantly different between various genotypes, replace "0000000" with "genotype" -- or the corresponding column header for genotype data.
+SIGNIFICANCE=genotype
+
+#Group significance statistical testing using unweighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/unweighted_unifrac_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using weighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/weighted_unifrac_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using Jaccard distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/jaccard_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/jaccard_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using Bray-Curtis distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/bray_curtis_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/bray_curtis_significance_$SIGNIFICANCE.qzv
+
+
+###################
+####### TIP #######
+###################
+
+#Set variable for feature table directory and taxonomy directory.
+FEATURE_TABLE_DIR=feature_table-tip
+
+#Determine depth for diversity analyses using "Interactive Sample Detail" tab in filtered_table.qzv. In general, you want to use the highest depth that retains the most number of samples.
+DEPTH=1952
+
+#Set directory name for diversity analyses.
+DIVERSITY_DIR=diversity-tip_$DEPTH
+
+#Run core diversity analyses. 
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny $TAXONOMY_DIR/rooted-tree.qza \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-n-jobs-or-threads $SLURM_CPUS_PER_TASK \
+  --p-sampling-depth $DEPTH \
+  --m-metadata-file sample-metadata.tsv \
+  --output-dir $DIVERSITY_DIR
+
+#Calculate additional alpha diversity metric: Simpson Diversity.
+qiime diversity alpha \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-metric simpson \
+  --o-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza
+
+
+## Alpha significance testing ##
+
+#Simpson diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/simpson_group_significance.qzv
+
+#Observed OTUs significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/observed_features_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/observed_features_group_significance.qzv
+
+#Faith's phylogenetic diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/faith_pd_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/faith_pd_group_significance.qzv
+
+#Evenness significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/evenness_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/evenness_group_significance.qzv
+
+#Shannon diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/shannon_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/shannon_group_significance.qzv
+
+
+## Beta significance testing ##
+
+#Specify a metadata column to examine significance. This gives you a q value to associate with your pretty ordination analyses. For instance, to see if some beta diversity metric is significantly different between various genotypes, replace "0000000" with "genotype" -- or the corresponding column header for genotype data.
+SIGNIFICANCE=genotype
+
+#Group significance statistical testing using unweighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/unweighted_unifrac_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using weighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/weighted_unifrac_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using Jaccard distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/jaccard_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/jaccard_significance_$SIGNIFICANCE.qzv
+
+#Group significance statistical testing using Bray-Curtis distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/bray_curtis_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/bray_curtis_significance_$SIGNIFICANCE.qzv
+  

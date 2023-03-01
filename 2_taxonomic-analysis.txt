@@ -1,0 +1,97 @@
+#Activate QIIME2
+conda activate qiime2-2022.2
+
+#Set feature table directory variable.
+FEATURE_TABLE_DIR=feature_table
+
+#Set taxonomy directory variable and create working directory.
+TAXONOMY_DIR=taxonomy
+mkdir -p $TAXONOMY_DIR
+
+#Set '$CLASSIFIER' environment variable to the location of your pretrained classifier. Taxonomic classifiers perform best when they are trained based on your specific sample preparation and sequencing parameters, including the primers that were used for amplification and the length of your sequence reads. Use '/hpc/group/helab/refDBs/q2-2022.2_pretrained_classifiers/SILVA_138/SILVA138_99_799-1193.qza' as indicated below for a classifier pretrained on 99% identities using 799F/1193 amplicon from SILVA 16S reference database release 138. Or, use pipeline file '0_training-feature-classifier.sb' as guide to train a classifier with different parameters and replace '/hpc/group/helab/refDBs/q2-2022.2_pretrained_classifiers/SILVA_138/SILVA138_99_799-1193.qza' with the path to your new classifier.
+CLASSIFIER=/hpc/group/helab/refDBs/q2-2022.2_pretrained_classifiers/SILVA_138/SILVA138_99_799-1193.qza
+
+#Taxonomic analysis. This step may take a few minutes.
+qiime feature-classifier classify-sklearn \
+  --i-classifier $CLASSIFIER \
+  --i-reads $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --p-n-jobs $SLURM_CPUS_PER_TASK \
+  --o-classification $TAXONOMY_DIR/taxonomy.qza
+
+#Visualize taxonomy table.
+qiime metadata tabulate \
+  --m-input-file $TAXONOMY_DIR/taxonomy.qza \
+  --o-visualization $TAXONOMY_DIR/taxonomy.qzv
+
+#Generate taxa bar plot visualization.
+qiime taxa barplot \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $TAXONOMY_DIR/taxa-bar-plots.qzv
+
+#Filter out mitochondria and chloroplast from feature table. If using a database other than SILVA release 138, arguments for 'p-include' and 'p-exclude' may need to be modified to reflect the exact nomenclature (e.g. capitalization) used in your reference database.
+qiime taxa filter-table \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --p-exclude Mitochondria,Chloroplast \
+  --o-filtered-table $FEATURE_TABLE_DIR/filtered_table.qza
+
+#Filter out mitochondria and chloroplast from rep-seqs. If using a database other than SILVA release 138, arguments for 'p-include' and 'p-exclude' may need to be modified to reflect the exact nomenclature (e.g. capitalization) used in your reference database.
+qiime taxa filter-seqs \
+  --i-sequences $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --p-exclude Mitochondria,Chloroplast \
+  --o-filtered-sequences $FEATURE_TABLE_DIR/filtered_rep-seqs.qza
+
+#Visualize filtered feature table.
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/filtered_table.qzv
+
+#Visualize filtered rep-seq table.
+qiime feature-table tabulate-seqs \
+  --i-data $FEATURE_TABLE_DIR/filtered_rep-seqs.qza \
+  --o-visualization $FEATURE_TABLE_DIR/filtered_rep-seqs.qzv
+
+#Visualize filtered taxa bar plot visualization.
+qiime taxa barplot \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $TAXONOMY_DIR/taxa-bar-plots_filtered.qzv
+
+#Generate a tree for phylogenetic diversity analyses.
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences $FEATURE_TABLE_DIR/filtered_rep-seqs.qza \
+  --o-alignment $FEATURE_TABLE_DIR/filtered_rep-seqs_aligned.qza \
+  --o-masked-alignment $FEATURE_TABLE_DIR/filtered_rep-seqs_aligned_masked.qza \
+  --o-tree $TAXONOMY_DIR/unrooted-tree.qza \
+  --o-rooted-tree $TAXONOMY_DIR/rooted-tree.qza
+
+#Filter table to Experiment 1 (with grm1).
+qiime feature-table filter-samples \
+  --i-table $FEATURE_TABLE_DIR-grm/filtered_table.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --p-where "[experiment]='1_grm'" \
+  --o-filtered-table $FEATURE_TABLE_DIR-grm/filtered_table.qza
+
+#Visualize filtered feature table for Experiment 1 (with grm1).
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR-grm/grm1-filtered-table.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR-grm/filtered_table.qzv
+
+#Filter table to Experiment 2 (with tip1).
+qiime feature-table filter-samples \
+  --i-table $FEATURE_TABLE_DIR-tip/filtered_table.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --p-where "[experiment]='2_tip'" \
+  --o-filtered-table $FEATURE_TABLE_DIR-tip/filtered_table.qza
+
+#Visualize filtered feature table for Experiment 2 (with tip1).
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR-tip/tip1-filtered-table.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR-tip/filtered_table.qzv

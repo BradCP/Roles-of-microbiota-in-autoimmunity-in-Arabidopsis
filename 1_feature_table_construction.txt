@@ -1,0 +1,71 @@
+#Activate QIIME2
+conda activate qiime2-2022.2
+
+#Indicate fastq sequence location(s) using the environment variables below.
+SEQS=/work/bcp30/CHE9595/merge/
+
+#Create working directory for sequences.
+mkdir -p paired-end_sequences/
+
+#Import sequences. Sequences from the MSU RTSF are in CASAVA-1.8 format.
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path $SEQS \
+  --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output-path paired-end_sequences/demux-paired-end.qza
+
+#Visualize sequences.
+qiime demux summarize \
+  --i-data paired-end_sequences/demux-paired-end.qza \
+  --o-visualization paired-end_sequences/demux-paired-end.qzv
+
+#Trim primers from sequences. This step will take several minutes.
+qiime cutadapt trim-paired \
+  --i-demultiplexed-sequences paired-end_sequences/demux-paired-end.qza \
+  --p-cores $SLURM_CPUS_PER_TASK \
+  --p-front-f AACMGGATTAGATACCCKG \
+  --p-front-r ACGTCATCCCCACCTTCC \
+  --p-match-read-wildcards \
+  --p-discard-untrimmed \
+  --p-minimum-length 150 \
+  --p-error-rate 0.17 \
+  --p-overlap 10 \
+  --verbose \
+  --o-trimmed-sequences paired-end_sequences/demux-trimmed-paired-end.qza
+
+#Visualize trimmed sequences.
+qiime demux summarize \
+  --i-data paired-end_sequences/demux-trimmed-paired-end.qza \
+  --o-visualization paired-end_sequences/demux-trimmed-paired-end.qzv
+
+#Set feature table directory variable.
+FEATURE_TABLE_DIR=feature_table
+
+#Create working directory for feature table.
+mkdir -p $FEATURE_TABLE_DIR
+
+#Denoise ASVs with DADA2. Reads should be truncated with '--p-trunc-len-f' and '--p-trunc-len-r' to remove lower quality positions towards the 3' ends. Refer to 'Interactive Quality Plot' tab of 'demux-trimmed-paired-end_lane-1.qzv' to determine ideal truncation length. DADA2 removes chimeras. This step may take a while.
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs paired-end_sequences/demux-trimmed-paired-end.qza \
+  --p-trunc-len-f 228\
+  --p-trunc-len-r 228\
+  --p-n-threads $SLURM_CPUS_PER_TASK \
+  --verbose \
+  --o-denoising-stats $FEATURE_TABLE_DIR/dada2-stats.qza \
+  --o-representative-sequences $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --o-table $FEATURE_TABLE_DIR/table.qza
+
+#Visualize DADA2 statistics.
+qiime metadata tabulate \
+  --m-input-file $FEATURE_TABLE_DIR/dada2-stats.qza \
+  --o-visualization $FEATURE_TABLE_DIR/dada2-stats.qzv
+
+#Visualize feature table 1 data summaries
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/table.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --o-visualization $FEATURE_TABLE_DIR/rep-seqs.qzv

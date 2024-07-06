@@ -1,0 +1,235 @@
+#!/bin/bash --login
+# Number of nodes needed:
+#SBATCH --nodes=1
+#
+# Wall time:
+#SBATCH --time=03:55:00
+#
+# Tasks per node:
+#SBATCH --ntasks=1
+#
+# Processors per task:
+#SBATCH --cpus-per-task=40
+#
+# Memory per node:
+#SBATCH --mem=64G
+#
+# Job name:
+#SBATCH --job-name q2
+#
+# Mail type:
+#SBATCH --mail-type=ALL
+#
+# Standard out and error:
+#SBATCH --output=%x-%j.SLURMout
+
+
+echo "JobID: $SLURM_JOB_ID"
+echo "Time: `date`"
+echo "Running on node: `hostname`"
+echo "Current directory: `pwd`"
+
+## Set conda directory and activate qiime2 ##
+__conda_setup="$('/hpc/group/helab/software/anaconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+else
+    if [ -f "/hpc/group/helab/software/anaconda3/etc/profile.d/conda.sh" ]; then
+        . "/hpc/group/helab/software/anaconda3/etc/profile.d/conda.sh"
+    else
+        export PATH="/hpc/group/helab/software/anaconda3/bin:$PATH"
+    fi
+fi
+unset __conda_setup
+conda activate qiime2-2022.2
+
+
+##-------------------------------------------##
+##               NOVASEQ PE250               ##
+##-------------------------------------------##
+
+FEATURE_TABLE_DIR=feature_table
+mkdir -p $FEATURE_TABLE_DIR
+
+############
+## Import ##
+############
+
+#Lane 1:
+DADA2_PATH=dada2
+LANE=_lane_1
+ERRORMOD=_1
+
+qiime tools import \
+--input-path $DADA2_PATH/q2-rep-seqs$ERRORMOD$LANE.fna \
+--type 'FeatureData[Sequence]' \
+--output-path $FEATURE_TABLE_DIR/rep-seqs$ERRORMOD$LANE.qza
+
+echo -n "#OTU Table" | cat - $DADA2_PATH/q2-seqtab$ERRORMOD-nochim$LANE.txt > $FEATURE_TABLE_DIR/biom-table$ERRORMOD$LANE.txt
+
+biom convert -i $FEATURE_TABLE_DIR/biom-table$ERRORMOD$LANE.txt -o $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.biom --table-type="OTU table" --to-hdf5
+
+qiime tools import \
+--input-path $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.biom \
+--type 'FeatureTable[Frequency]' \
+--input-format BIOMV210Format \
+--output-path $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.qza
+
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data $FEATURE_TABLE_DIR/rep-seqs$ERRORMOD$LANE.qza \
+  --o-visualization $FEATURE_TABLE_DIR/rep-seqs$ERRORMOD$LANE.qzv
+
+TABLE1=table$ERRORMOD$LANE.qza
+REPSEQ1=rep-seqs$ERRORMOD$LANE.qza
+
+#Lane 2:
+DADA2_PATH=dada2
+LANE=_lane_2
+ERRORMOD=_1
+
+qiime tools import \
+--input-path $DADA2_PATH/q2-rep-seqs$ERRORMOD$LANE.fna \
+--type 'FeatureData[Sequence]' \
+--output-path $FEATURE_TABLE_DIR/rep-seqs$ERRORMOD$LANE.qza
+
+echo -n "#OTU Table" | cat - $DADA2_PATH/q2-seqtab$ERRORMOD-nochim$LANE.txt > $FEATURE_TABLE_DIR/biom-table$ERRORMOD$LANE.txt
+
+biom convert -i $FEATURE_TABLE_DIR/biom-table$ERRORMOD$LANE.txt -o $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.biom --table-type="OTU table" --to-hdf5
+
+qiime tools import \
+--input-path $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.biom \
+--type 'FeatureTable[Frequency]' \
+--input-format BIOMV210Format \
+--output-path $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.qza
+
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/table$ERRORMOD$LANE.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data $FEATURE_TABLE_DIR/rep-seqs$ERRORMOD$LANE.qza \
+  --o-visualization $FEATURE_TABLE_DIR/rep-seqs$ERRORMOD$LANE.qzv
+
+TABLE2=table$ERRORMOD$LANE.qza
+REPSEQ2=rep-seqs$ERRORMOD$LANE.qza
+
+#Merge Lane 1 and Lane 2 feature tables and data summaries
+qiime feature-table merge \
+  --i-tables $FEATURE_TABLE_DIR/$TABLE1 \
+  --i-tables $FEATURE_TABLE_DIR/$TABLE2 \
+  --p-overlap-method sum \
+  --o-merged-table $FEATURE_TABLE_DIR/table.qza
+
+qiime feature-table merge-seqs \
+  --i-data $FEATURE_TABLE_DIR/$REPSEQ1 \
+  --i-data $FEATURE_TABLE_DIR/$REPSEQ2 \
+  --o-merged-data $FEATURE_TABLE_DIR/rep-seqs.qza
+
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/table.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --o-visualization $FEATURE_TABLE_DIR/rep-seqs.qzv
+
+## Create directory for taxonomy-related items
+TAXONOMY_DIR=taxonomy
+mkdir -p $TAXONOMY_DIR
+
+## Assign taxonomy
+qiime feature-classifier classify-sklearn \
+  --i-classifier /hpc/group/helab/refDBs/q2-2022.2_pretrained_classifiers/SILVA_138/SILVA138_99_799-1193.qza \
+  --i-reads $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --p-n-jobs 1 \
+  --o-classification $TAXONOMY_DIR/taxonomy.qza
+#Taxonomic classifiers perform best when they are trained based on your specific sample preparation and sequencing parameters, including the primers that were used for amplification and the length of your sequence reads.
+#As is, this this classifier was trained with sequences extracted using 799F/1193R primers from SILVA release 132 and 99% OTU data. If you trained your own classifier using different perameters, change the i-classifier path.
+
+qiime metadata tabulate \
+  --m-input-file $TAXONOMY_DIR/taxonomy.qza \
+  --o-visualization $TAXONOMY_DIR/taxonomy.qzv
+
+# Generate taxa bar plots
+qiime taxa barplot \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $TAXONOMY_DIR/taxa-bar-plots.qzv
+
+## Collapse samples by genotype and make tax bar plot.
+GROUP_COLUMN=compartment_genotype
+
+qiime feature-table group \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --p-axis sample \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $GROUP_COLUMN \
+  --p-mode sum \
+  --o-grouped-table $FEATURE_TABLE_DIR/table_$GROUP_COLUMN.qza
+
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/table_$GROUP_COLUMN.qza \
+  --m-sample-metadata-file sample-metadata_$GROUP_COLUMN.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/table_$GROUP_COLUMN.qzv
+
+qiime taxa barplot \
+  --i-table $FEATURE_TABLE_DIR/table_$GROUP_COLUMN.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata_$GROUP_COLUMN.tsv \
+  --o-visualization $TAXONOMY_DIR/taxa-bar-plots_$GROUP_COLUMN.qzv
+
+# Filter out mitochondria, chloroplast, and anything that wasn't classified to at least the phylum level from feature table
+qiime taxa filter-table \
+  --i-table $FEATURE_TABLE_DIR/table.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --p-exclude Mitochondria,Chloroplast \
+  --p-include p__ \
+  --o-filtered-table $FEATURE_TABLE_DIR/filtered_table.qza
+#If using a database other than SILVA release 138, p-include and p-exclude may need to be modified to reflect the nomenclature used in your reference database. This does not need to be changed if using the pretrained classifier.
+
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/filtered_table.qzv
+
+# Filter rep seqs.
+qiime feature-table filter-seqs \
+  --i-data $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --o-filtered-data $FEATURE_TABLE_DIR/filtered_rep-seqs.qza
+
+qiime feature-table tabulate-seqs \
+  --i-data $FEATURE_TABLE_DIR/filtered_rep-seqs.qza \
+  --o-visualization $FEATURE_TABLE_DIR/filtered_rep-seqs.qzv
+
+## Collapse samples by genotype and make tax bar plot.
+GROUP_COLUMN=compartment_genotype
+
+qiime feature-table group \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --p-axis sample \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $GROUP_COLUMN \
+  --p-mode sum \
+  --o-grouped-table $FEATURE_TABLE_DIR/filtered_table_$GROUP_COLUMN.qza
+
+qiime feature-table summarize \
+  --i-table $FEATURE_TABLE_DIR/filtered_table_$GROUP_COLUMN.qza \
+  --m-sample-metadata-file sample-metadata_$GROUP_COLUMN.tsv \
+  --o-visualization $FEATURE_TABLE_DIR/filtered_table_$GROUP_COLUMN.qzv
+
+qiime taxa barplot \
+  --i-table $FEATURE_TABLE_DIR/filtered_table_$GROUP_COLUMN.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata_$GROUP_COLUMN.tsv \
+  --o-visualization $TAXONOMY_DIR/taxa-bar-plots_filtered_$GROUP_COLUMN.qzv
+
+scontrol show job $SLURM_JOB_ID

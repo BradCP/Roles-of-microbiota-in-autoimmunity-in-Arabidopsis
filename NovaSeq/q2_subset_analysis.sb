@@ -1,0 +1,277 @@
+#!/bin/bash --login
+# Number of nodes needed:
+#SBATCH --nodes=1
+#
+# Wall time:
+#SBATCH --time=03:55:00
+#
+# Tasks per node:
+#SBATCH --ntasks=1
+#
+# Processors per task:
+#SBATCH --cpus-per-task=40
+#
+# Memory per node:
+#SBATCH --mem=64G
+#
+# Job name:
+#SBATCH --job-name q2
+#
+# Mail type:
+#SBATCH --mail-type=ALL
+#
+# Standard out and error:
+#SBATCH --output=%x-%j.SLURMout
+
+
+echo "JobID: $SLURM_JOB_ID"
+echo "Time: `date`"
+echo "Running on node: `hostname`"
+echo "Current directory: `pwd`"
+
+## Set conda directory and activate qiime2 ##
+__conda_setup="$('/hpc/group/helab/software/anaconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+else
+    if [ -f "/hpc/group/helab/software/anaconda3/etc/profile.d/conda.sh" ]; then
+        . "/hpc/group/helab/software/anaconda3/etc/profile.d/conda.sh"
+    else
+        export PATH="/hpc/group/helab/software/anaconda3/bin:$PATH"
+    fi
+fi
+unset __conda_setup
+conda activate qiime2-2022.2
+
+FEATURE_TABLE_DIR=feature_table
+TAXONOMY_DIR=taxonomy
+
+SUBSET_DIR=set1d
+SUBSET=set1d
+mkdir -p $SUBSET_DIR
+
+mkdir -p $SUBSET_DIR/table
+
+# Create feature table with only samples from specific subset as indicated by Yuti.
+qiime feature-table filter-samples \
+  --i-table $FEATURE_TABLE_DIR/filtered_table.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --p-where "[$SUBSET]='1'" \
+  --o-filtered-table $SUBSET_DIR/table/filtered_table-$SUBSET.qza
+
+qiime feature-table summarize \
+  --i-table $SUBSET_DIR/table/filtered_table-$SUBSET.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $SUBSET_DIR/table/filtered_table-$SUBSET.qzv
+
+##---------------------------##
+##  Abundance filter 0.005%  ##
+##---------------------------##
+
+# Abundance filter OTUs less than 0.005% or only present in a single sample. Calculate value for '--p-min-frequency' from filtered_table.qzv
+qiime feature-table filter-features \
+  --i-table $SUBSET_DIR/table/filtered_table-$SUBSET.qza \
+  --p-min-frequency 4183 \
+  --p-min-samples 2 \
+  --o-filtered-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza
+
+qiime feature-table summarize \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --m-sample-metadata-file sample-metadata.tsv \
+  --o-visualization $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qzv
+
+mkdir -p $SUBSET_DIR/seqs
+
+qiime feature-table filter-seqs \
+  --i-data $FEATURE_TABLE_DIR/rep-seqs.qza \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --o-filtered-data $SUBSET_DIR/seqs/abundance_filtered_rep-seqs-$SUBSET.qza
+  
+qiime feature-table tabulate-seqs \
+  --i-data $SUBSET_DIR/seqs/abundance_filtered_rep-seqs-$SUBSET.qza \
+  --o-visualization $SUBSET_DIR/seqs/abundance_filtered_rep-seqs-$SUBSET.qzv
+
+# Generate taxa bar plots
+mkdir -p $SUBSET_DIR/tax
+
+qiime taxa barplot \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $SUBSET_DIR/tax/taxa-bar-plots_filtered_abundance-$SUBSET.qzv
+
+## Collapse samples by genotype and make tax bar plot.
+GROUP_COLUMN=genotype
+
+qiime feature-table group \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --p-axis sample \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $GROUP_COLUMN \
+  --p-mode sum \
+  --o-grouped-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET-$GROUP_COLUMN.qza
+
+qiime feature-table summarize \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET-$GROUP_COLUMN.qza \
+  --m-sample-metadata-file sample-metadata_$GROUP_COLUMN.tsv \
+  --o-visualization $SUBSET_DIR/table/abundance_filtered_table-$SUBSET-$GROUP_COLUMN.qzv
+
+qiime taxa barplot \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET-$GROUP_COLUMN.qza \
+  --i-taxonomy $TAXONOMY_DIR/taxonomy.qza \
+  --m-metadata-file sample-metadata_$GROUP_COLUMN.tsv \
+  --o-visualization $SUBSET_DIR/tax/taxa-bar-plots_filtered_abundance-$SUBSET-$GROUP_COLUMN.qzv
+
+##----------------------------##
+## Generate phylogenetic tree ##
+##----------------------------##
+mkdir -p $SUBSET_DIR/tree 
+
+## Generate a tree for phylogenetic diversity analyses
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences $SUBSET_DIR/seqs/abundance_filtered_rep-seqs-$SUBSET.qza \
+  --p-n-threads $SLURM_CPUS_PER_TASK \
+  --o-alignment $SUBSET_DIR/tree/filtered_rep-seqs_aligned-$SUBSET.qza \
+  --o-masked-alignment $SUBSET_DIR/tree/filtered_rep-seqs_aligned_masked-$SUBSET.qza \
+  --o-tree $SUBSET_DIR/tree/filtered_unrooted-tree-$SUBSET.qza \
+  --o-rooted-tree $SUBSET_DIR/tree/filtered_rooted-tree-$SUBSET.qza
+
+#Determine depth for diversity analyses using "Interactive Sample Detail" tab in filtered_table.qzv. In general, you want to use the highest depth that retains the most number of samples.
+DEPTH=74693
+
+#Set directory name for diversity analyses.
+DIVERSITY_DIR=$SUBSET_DIR/diversity-$DEPTH
+
+#Run core diversity analyses. 
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny $SUBSET_DIR/tree/filtered_rooted-tree-$SUBSET.qza \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --p-n-jobs-or-threads $SLURM_CPUS_PER_TASK \
+  --p-sampling-depth $DEPTH \
+  --m-metadata-file sample-metadata.tsv \
+  --output-dir $DIVERSITY_DIR
+
+#Calculate additional alpha diversity metric: Simpson Diversity.
+qiime diversity alpha \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --p-metric simpson \
+  --o-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza
+
+## Alpha significance testing ##
+
+#Simpson diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/simpson_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/simpson_group_significance.qzv
+
+#Observed OTUs significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/observed_features_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/observed_features_group_significance.qzv
+
+#Faith's phylogenetic diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/faith_pd_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/faith_pd_group_significance.qzv
+
+#Evenness significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/evenness_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/evenness_group_significance.qzv
+
+#Shannon diversity significance statistical testing.
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity $DIVERSITY_DIR/shannon_vector.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/shannon_group_significance.qzv
+
+## Beta significance testing ##
+
+#Specify a metadata column to examine significance. This gives you a q value to associate with your pretty ordination analyses. For instance, to see if some beta diversity metric is significantly different between various genotypes, replace "0000000" with "genotype" -- or the corresponding column header for genotype data.
+SIGNIFICANCE=genotype
+
+#Group significance PERMANOVA statistical testing using unweighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/unweighted_unifrac_significance_$SIGNIFICANCE"_"PERMANOVA.qzv
+
+#Group significance PERMANOVA statistical testing using weighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/weighted_unifrac_significance_$SIGNIFICANCE"_"PERMANOVA.qzv
+
+#Group significance PERMANOVA statistical testing using Jaccard distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/jaccard_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/jaccard_significance_$SIGNIFICANCE"_"PERMANOVA.qzv
+
+#Group significance PERMANOVA statistical testing using Bray-Curtis distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/bray_curtis_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/bray_curtis_significance_$SIGNIFICANCE"_"PERMANOVA.qzv
+
+#Group significance PERMDISP statistical testing using unweighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-method permdisp \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/unweighted_unifrac_significance_$SIGNIFICANCE"_"PERMDISP.qzv
+
+#Group significance PERMDISP statistical testing using weighted UniFrac distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-method permdisp \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/weighted_unifrac_significance_$SIGNIFICANCE"_"PERMDISP.qzv
+
+#Group significance PERMDISP statistical testing using Jaccard distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/jaccard_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-method permdisp \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/jaccard_significance_$SIGNIFICANCE"_"PERMDISP.qzv
+
+#Group significance PERMDISP statistical testing using Bray-Curtis distances.
+qiime diversity beta-group-significance \
+  --i-distance-matrix $DIVERSITY_DIR/bray_curtis_distance_matrix.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --m-metadata-column $SIGNIFICANCE \
+  --p-method permdisp \
+  --p-pairwise \
+  --o-visualization $DIVERSITY_DIR/bray_curtis_significance_$SIGNIFICANCE"_"PERMDISP.qzv
+
+#Set depth for alpha rarefaction plotting.
+ALPHA_DEPTH=200000
+
+#Alpha rarefaction plotting. The value that you provide for '--p-max-depth' should be determined by reviewing the “Frequency per sample” information presented in the filtered_table.qza file that was created above. In general, choosing a value that is somewhere around the median frequency seems to work well, but you may want to increase that value if the lines in the resulting rarefaction plot don’t appear to be leveling out, or decrease that value if you seem to be losing many of your samples due to low total frequencies closer to the minimum sampling depth than the maximum sampling depth. This step may take a while. To speed up by decreasing resolution, remove line '--p-steps `expr $ALPHA_DEPTH / 100`'.
+qiime diversity alpha-rarefaction \
+  --i-table $SUBSET_DIR/table/abundance_filtered_table-$SUBSET.qza \
+  --i-phylogeny $SUBSET_DIR/tree/filtered_rooted-tree-$SUBSET.qza \
+  --p-max-depth $ALPHA_DEPTH \
+  --p-steps `expr $ALPHA_DEPTH / 2000` \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization $DIVERSITY_DIR/alpha_rarefaction_plot_$ALPHA_DEPTH.qzv
+
+scontrol show job $SLURM_JOB_ID
